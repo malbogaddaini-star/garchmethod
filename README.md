@@ -13,7 +13,7 @@ The model family is Engle's ARCH / Bollerslev's GARCH — the volatility machine
 In Claude Code:
 
 ```
-/plugin marketplace add [YOUR-USERNAME]/garchmethod
+/plugin marketplace add milesdeutscher/garchmethod
 /plugin install garch-method@garchmethod
 ```
 
