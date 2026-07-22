@@ -1,0 +1,137 @@
+//@version=6
+// =============================================================================
+// RSI Mean-Reversion — BTC/USD, Daily  (fully objective, zero-discretion)
+// Companion strategy to rsi-mean-reversion.md. Every rule is arithmetic on
+// CLOSED daily bars; signals compute on the close of day D and fill at the
+// open of D+1. Paste into TradingView Pine Editor, add to a DAILY BTC/USD
+// chart, Save, Add to Chart. Backtest settings are baked into strategy():
+//   • initial capital  $100,000
+//   • commission       0.1% per side (percent-of-notional)
+//   • one position at a time (pyramiding = 0), long/flat primary
+//   • fills on the NEXT bar open (Pine default; process_orders_on_close = false)
+// =============================================================================
+
+strategy(
+     title              = "RSI Mean-Reversion — BTC/USD Daily",
+     shorttitle         = "RSI-MR BTCUSD",
+     overlay            = true,
+     initial_capital    = 100000,
+     currency           = currency.USD,
+     default_qty_type   = strategy.fixed,          // we pass qty explicitly per order
+     pyramiding         = 0,                         // one position at a time, no adds
+     commission_type    = strategy.commission.percent,
+     commission_value   = 0.1,                       // 0.1% per side
+     slippage           = 0,                         // ticks; raise to model slippage
+     calc_on_order_fills= false,
+     process_orders_on_close = false,               // => market orders fill on next bar open
+     close_entries_rule = "ANY")
+
+// ------------------------------------------------------------------ Inputs (§2)
+grpP      = "Parameters (frozen constants — set once, do not touch mid-run)"
+L         = input.int(14,   "RSI length (L)",              minval=2,  group=grpP)
+osLevel   = input.float(30, "Oversold entry (OS)",         minval=1,  maxval=49, group=grpP)
+exitLevel = input.float(50, "Mean-reversion exit (RSI)",   minval=50, maxval=95, group=grpP)
+smaN      = input.int(200,  "Trend-gate SMA length",       minval=5,  group=grpP)
+atrN      = input.int(14,   "ATR length",                  minval=2,  group=grpP)
+kStop     = input.float(2.5,"Stop distance (k × ATR)",     minval=0.1,step=0.1, group=grpP)
+nMax      = input.int(10,   "Time stop (bars held)",       minval=1,  group=grpP)
+riskPct   = input.float(1.0,"Risk per trade (% equity)",   minval=0.1,maxval=100, step=0.1, group=grpP)
+levCap    = input.float(1.0,"Max notional / equity (leverage cap)", minval=0.1, step=0.1, group=grpP)
+
+grpT      = "Toggles (declare BEFORE the backtest, then leave alone)"
+useGate   = input.bool(true,  "Regime gate ON (close > SMA200)", group=grpT)
+allowShort= input.bool(false, "Enable symmetric short (perps/futures only, §7)", group=grpT)
+obLevel   = input.float(70,   "Overbought short entry (short only)", minval=51, maxval=99, group=grpT)
+
+// ------------------------------------------------------------ Indicators (§1)
+// Pine's ta.rsi / ta.atr use Wilder's RMA smoothing — matches the spec exactly.
+rsi   = ta.rsi(close, L)
+sma   = ta.sma(close, smaN)
+atr   = ta.atr(atrN)
+
+// Only trade once SMA200 is defined (spec: ≥200 bars of history, flat until then).
+histReady = not na(sma) and bar_index >= smaN
+
+// ------------------------------------------------------------ State (per trade)
+var float entryATR   = na    // ATR of the signal bar, frozen at order time
+var int   entryBar   = na    // bar_index at which the position opened
+var float stopPrice  = na    // fixed protective stop (close-through, §5)
+
+// --------------------------------------------------------------- Entry (§3, §7)
+flat          = strategy.position_size == 0
+oversoldCross = rsi < osLevel and rsi[1] >= osLevel        // one trigger per episode
+overboughtX   = rsi > obLevel and rsi[1] <= obLevel
+regimeLongOk  = not useGate or close > sma
+regimeShortOk = not useGate or close < sma
+
+longSignal  = flat and histReady and oversoldCross and regimeLongOk
+shortSignal = flat and histReady and allowShort and overboughtX and regimeShortOk
+
+// Fixed-fractional risk sizing (§6). stop_distance = k·ATR is independent of the
+// fill price, so qty is exactly computable at signal time; the leverage cap uses
+// close(D) as a proxy for the O(D+1) fill (difference is immaterial to the cap).
+f_qty(_atr) =>
+    riskUsd  = (riskPct / 100.0) * strategy.equity
+    stopDist = kStop * _atr
+    q        = stopDist > 0 ? riskUsd / stopDist : 0.0
+    notional = q * close
+    capQty   = (levCap * strategy.equity) / close
+    notional > levCap * strategy.equity ? capQty : q
+
+if longSignal
+    entryATR := atr
+    qty = f_qty(atr)
+    if qty > 0
+        strategy.entry("Long", strategy.long, qty=qty)
+
+if shortSignal
+    entryATR := atr
+    qty = f_qty(atr)
+    if qty > 0
+        strategy.entry("Short", strategy.short, qty=qty)
+
+// ------------------------------------------ Capture the fill (runs on D+1 open bar)
+justEnteredLong  = strategy.position_size > 0 and strategy.position_size[1] <= 0
+justEnteredShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
+
+if justEnteredLong
+    entryBar  := bar_index
+    stopPrice := strategy.position_avg_price - kStop * entryATR   // = O(D+1) − k·ATR
+if justEnteredShort
+    entryBar  := bar_index
+    stopPrice := strategy.position_avg_price + kStop * entryATR
+
+// --------------------------------------------------------------- Exit (§4, §5)
+// Evaluated on the CLOSE of each day; market-on-next-open. Close-through stop
+// (not intraday touch) to ignore wick noise. Priority: E2 stop > E3 time > E1 target.
+inLong  = strategy.position_size > 0
+inShort = strategy.position_size < 0
+barsHeld = bar_index - entryBar
+
+if inLong
+    hitStop = close <= stopPrice          // E2
+    hitTime = barsHeld >= nMax            // E3
+    hitTgt  = rsi >= exitLevel            // E1
+    reason  = hitStop ? "E2 stop" : hitTime ? "E3 time" : hitTgt ? "E1 target" : na
+    if not na(reason)
+        strategy.close("Long", comment=reason)
+
+if inShort
+    hitStop = close >= stopPrice          // E2
+    hitTime = barsHeld >= nMax            // E3
+    hitTgt  = rsi <= (100 - exitLevel)    // E1 mirror: RSI ≤ 50
+    reason  = hitStop ? "E2 stop" : hitTime ? "E3 time" : hitTgt ? "E1 target" : na
+    if not na(reason)
+        strategy.close("Short", comment=reason)
+
+// ------------------------------------------------------------------- Plots
+plot(histReady ? sma : na, "SMA200 trend gate", color=color.new(color.orange, 0), linewidth=2)
+plot(strategy.position_size != 0 ? stopPrice : na, "Stop", color=color.new(color.red, 0),
+     style=plot.style_linebr, linewidth=2)
+
+// RSI reference (invisible on price pane; open a separate RSI indicator to view it,
+// or add these as an overlay=false companion). Kept here for signal transparency.
+plotchar(longSignal,  "Long signal",  "▲", location.belowbar, color.new(color.green, 0), size=size.tiny)
+plotchar(shortSignal and allowShort, "Short signal", "▼", location.abovebar, color.new(color.red, 0), size=size.tiny)
+
+bgcolor(useGate and histReady and close > sma ? color.new(color.green, 95) : na, title="Bull-regime tint")
