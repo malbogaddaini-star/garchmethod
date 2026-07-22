@@ -257,7 +257,7 @@ def main():
     ap.add_argument("--csv", required=True, help="Daily BTC/USD CSV (date, close[, open, high, low])")
     ap.add_argument("--capital", type=float, default=100_000.0)
     ap.add_argument("--risk-pct", type=float, default=1.0, help="Equity risked per trade (%%)")
-    ap.add_argument("--k", type=float, default=2.5, help="Stop distance in ATRs")
+    ap.add_argument("--k", type=float, default=1.5, help="Stop distance in ATRs")
     ap.add_argument("--n-max", type=int, default=10, help="Time stop (bars held)")
     ap.add_argument("--os", type=float, default=30.0, help="Oversold entry level")
     ap.add_argument("--exit", type=float, default=50.0, dest="exit_level", help="RSI exit level")
