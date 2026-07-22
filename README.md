@@ -52,6 +52,15 @@ Honest label, on the panel itself: the gauge uses *realized* vol (Pine-native ma
 
 Open TradingView → Pine Editor → paste the `.pine` → Save → Add to Chart. **Use the daily chart.** Inputs: 365 periods/year for crypto, 252 for stocks.
 
+## RSI mean-reversion — objective rule set + backtest
+
+`rsi-mean-reversion.md` — a fully objective, zero-discretion RSI mean-reversion rule set for BTC/USD daily: exact entry (RSI-30 cross-down inside a bull regime), exit (RSI 50 target / 2.5·ATR stop / 10-bar time stop), stop logic, and 1%-risk ATR position sizing. Every rule reduces to arithmetic on closed daily bars.
+
+Two runnable companions to the doc:
+
+- `pine-script/rsi-mean-reversion.pine` — the same strategy as a TradingView **v6 strategy** (not just an indicator): $100k start, 0.1%/side commission, next-bar-open fills, one position at a time. Paste → Save → Add to Chart on a daily BTC/USD chart → read the Strategy Tester.
+- `scripts/rsi_backtest.py` — the identical logic offline in pandas/numpy for CSV backtests, so you can verify the numbers without TradingView. `uv run scripts/rsi_backtest.py --csv btcusd_daily.csv` (add `--no-gate` for the classic RSI-30 variant, `--chart eq.png --trades trades.csv` for outputs).
+
 ## Credit
 
 - **Model family:** Robert Engle (ARCH, Nobel 2003) and Tim Bollerslev (GARCH, 1986). Read the originals — the math is theirs.
